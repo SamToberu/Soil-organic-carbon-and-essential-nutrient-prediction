@@ -1,0 +1,609 @@
+---
+title: "Soil Organic Carbon and Essential Soil Nutrient Prediction"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+runtime: shiny    
+---
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(readxl)
+library(readr)
+library(rgdal)
+library(sf)
+library(tmap)
+tmap_mode(mode = "plot")
+library(raster)
+library(rasterVis)
+library(terra)
+library(matrixStats)
+library(dplyr)
+library(shiny)
+library(ggplot2)
+library(randomForest)
+library(GGally)
+library(ggpubr)
+library(backports)
+library(shinyWidgets)
+library(ithir)
+library(plotly)
+library(prettymapr)
+library(prettyunits)
+
+
+swbd <- st_read("swlgac.shp")
+
+original <-read_csv("SouthwestFertilityFinal25.csv")
+cleaned <- read_csv("cleaned_aggregated.csv")
+cleaned <- cleaned[ ,-c(1,2)]
+isda <- read.csv("isda_[0-20].csv")
+isda$clay_content <-as.numeric(isda$clay_content)
+isda <- na.omit(isda)
+isda$bulk_density <-as.numeric(isda$bulk_density)
+isda$aluminium_extractable <-as.numeric(isda$aluminium_extractable)
+isda$carbon_total <-as.numeric(isda$carbon_total)
+isda$calcium_extractable <-as.numeric(isda$calcium_extractable)
+isda$cation_exchange_capacity <-as.numeric(isda$cation_exchange_capacity)
+isda$iron_extractable <-as.numeric(isda$iron_extractable)
+isda$potassium_extractable <-as.numeric(isda$potassium_extractable)
+isda$magnesium_extractable <-as.numeric(isda$magnesium_extractable)
+isda$nitrogen_total <-as.numeric(isda$nitrogen_total)
+isda$carbon_organic  <-as.numeric(isda$carbon_organic )
+isda$phosphorous_extractable <-as.numeric(isda$phosphorous_extractable)
+isda$sulphur_extractable  <-as.numeric(isda$sulphur_extractable)
+isda$zinc_extractable  <-as.numeric(isda$zinc_extractable )
+isda$pH <-as.numeric(isda$pH)
+isda$sand_content <-as.numeric(isda$sand_content)
+isda$silt_content <-as.numeric(isda$silt_content)
+isda$stone_content <-as.numeric(isda$stone_content)
+
+gridd <- read_csv("new_soil_properties_[0-20].csv")
+
+datast <- cleaned %>%
+  inner_join(isda, by = c("Long", "Lat"), suffix = c("_ag", "_is"))
+
+
+datast<- na.omit(datast)
+
+ilajuTop <- read_csv("IlajuTop23.csv")
+ilajuTop$Long <- as.numeric(ilajuTop$Long)
+ilajuTop <- na.omit(ilajuTop)
+
+AggrIlaju <- read.csv("AggrIlaju2.csv")
+
+```
+
+
+sidebar {.sidebar}
+===================================================
+
+```{r}
+ textInput(inputId = "caption",
+                label = "Caption:",
+                value = "Nutrient Mapping and Accuracy")
+      
+      # Input: Selector for choosing dataset ----
+      selectInput(inputId = "dataset",
+                  label = "Choose a dataset:",
+                  choices = c("original", "cleaned", "isda", "gridd", "ilajuTop","AggrIlaju"))
+
+datasetInput <- reactive({
+    switch(input$dataset,
+           "original" = original,
+           "cleaned" = cleaned,
+           "isda" = isda,
+            "gridd"= gridd,
+           "ilajuTop"= ilajuTop,
+           "aggIlajuTop" = aggIlajuTop,
+           "AggrIlaju" = AggrIlaju)
+  })
+selectInput("state", "Select your State", selected = "Oyo",
+                  choices = unique(swbd$NAME_1))
+
+polyn <- reactive({
+  polyg <- swbd%>%
+      filter(NAME_1 == input$state)
+  polyg
+})
+
+dt <-reactive({
+  ggscatter(data = datastt(), 
+                   x=input$x,
+                   y=input$y,
+                   cor.coef = TRUE,
+                   cor.method = "pearson")
+})
+ 
+
+
+```
+
+AccuracyP {data-navmenu=Navebutton}
+==============================================
+
+Column {data-width=450}
+-----------------------------------------------------------------------
+
+### Plot of sampling points on the project area
+
+```{r}
+renderPlot({
+    swdp <- datasetInput()
+    coordinates(swdp)<- ~Long+Lat
+    qtm(swbd, format = "World", projection = "+proj=tmerc +lat_0=4 +lon_0=4.5 
+                    +k=0.99975 +x_0=230738.26 +y_0=0 
+                    +ellps=clrk80 +units=m +no_defs")+
+      qtm(swdp,  format = "World",projection = "+proj=tmerc +lat_0=4 +lon_0=4.5 
+                    +k=0.99975 +x_0=230738.26 +y_0=0 
+                    +ellps=clrk80 +units=m +no_defs")
+    plot(swbd$geometry)
+    points(swdp)
+     addnortharrow(pos = "topleft", padin = c(4,0.5), scale = .5,
+                  lwd = .5, border = "black", cols = c("white", "black"),
+                  text.col = "black")
+    addscalebar(widthhint = 0.1, unitcategory = "metric", htin = 0.1,
+                padin = c(2, 0.3), style = "bar", bar.cols = c("black", "white"),
+                lwd = 0.4, label.cex = 0.8, label.col = "black", pos = "bottomleft")
+  })
+
+
+```
+
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+### Accuracy and Precision
+
+```{r}
+ renderPrint({
+    swdp <- datasetInput()
+    coordinates(swdp)<- ~Long+Lat
+    qtm(swbd, format = "World", projection = "+proj=tmerc +lat_0=4 +lon_0=4.5 
+                    +k=0.99975 +x_0=230738.26 +y_0=0 
+                    +ellps=clrk80 +units=m +no_defs")+
+      qtm(swdp,  format = "World",projection = "+proj=tmerc +lat_0=4 +lon_0=4.5 
+                    +k=0.99975 +x_0=230738.26 +y_0=0 
+                    +ellps=clrk80 +units=m +no_defs")
+    
+    files <- list.files(path = "C:\\RtrainingFiles\\Land_suit project\\files4",
+                        pattern = "\\.tif$", full.names = TRUE)
+    r1 <- raster(files[1])
+    for (i in 2:length(files)) {
+      r1 <- raster::stack(r1, files[i])
+    }
+    r1
+    
+    swdat <- raster::extract(r1, swdp, sp = 1,
+                             method = "simple")
+    swdat <- as.data.frame(swdat)
+    str(swdat)
+    
+    swdat<- swdat[complete.cases(swdat), ]
+    str(swdat)
+    
+    set.seed(123)
+    training <- sample(nrow(swdat), 0.7 * nrow(swdat))
+    model_reg <- randomForest(potassium_extractable~ aspect4 + 
+                                flowdir4 + slope4+  hillshade +roughness4 + topoindex4+
+                                temperatureData+precipitationData +ndvi9+toporough4,
+                      data = swdat[training,], ntree = 500, mtry = 5)
+    
+    str(training)
+    # calibration predictions
+    
+    model_reg_C <- predict(model_reg , swdat[training, ])
+    
+    # validation predictions
+    
+    model_reg_V <- predict(model_reg , swdat[-training, ])
+    
+    # validation
+    
+    goof(observed = swdat$nitrogen_total[-training], predicted
+         = model_reg_V, type = "DSM")
+    
+  })
+
+
+```
+
+View nutrient {data-navmenu=Navebutton}
+===========================================================
+
+Column {.tabset}
+-----------------------------------------------------------------------
+
+### Nitrogen
+
+```{r}
+renderPlot({
+    swdp <- datasetInput()
+    
+    ## change coordinates to numeric data type
+    ## Remove all non-finite data
+    swdp <- na.omit(swdp)
+    str(swdp)
+    ## Read in the boundary shape file from the directory
+    swbd <- st_read("swlgac.shp")
+    
+    ## Change data point dataframe to Spatialpoint data frame
+    coordinates(swdp)<- ~Long+Lat
+    
+    
+    ## Plot the boundary shape file and data points to preview 
+    qtm(swbd, format = "World", projection = "+proj=tmerc +lat_0=4 +lon_0=4.5 
+                    +k=0.99975 +x_0=230738.26 +y_0=0 
+                    +ellps=clrk80 +units=m +no_defs")+
+      qtm(swdp,  format = "World",projection = "+proj=tmerc +lat_0=4 +lon_0=4.5 
+                    +k=0.99975 +x_0=230738.26 +y_0=0 
+                    +ellps=clrk80 +units=m +no_defs")
+    
+    files <- list.files(path = "C:\\RtrainingFiles\\Land_suit project\\files4",
+                        pattern = "\\.tif$", full.names = TRUE)
+    r1 <- raster(files[1])
+    for (i in 2:length(files)) {
+      r1 <- raster::stack(r1, files[i])
+    }
+    r1
+    
+    swdat <- raster::extract(r1, swdp, sp = 1,
+                             method = "simple")
+    swdat <- as.data.frame(swdat)
+  
+    which(!complete.cases(swdat))
+    swdat<- swdat[complete.cases(swdat), ]
+    str(swdat)
+    
+    Sw.MLR_full <- randomForest(nitrogen_total~ aspect4 + 
+                                flowdir4 + slope4+  hillshade +roughness4 + topoindex4+
+                                temperatureData+precipitationData +ndvi9+toporough4,
+                      data = swdat, ntree = 500, mtry = 5)
+    
+    tempD <- data.frame(cellNos = seq(1:ncell(r1)))
+    vals <- as.data.frame(getValues(r1))
+    tempD <- cbind(tempD, vals)
+    tempD <- tempD[complete.cases(tempD), ]
+    cellNos <- c(tempD$cellNos)
+    gXY <- data.frame(xyFromCell(r1, cellNos, spatial = FALSE))
+    tempD <- cbind(gXY, tempD)
+    str(tempD)
+    
+    swmap.MLR <- predict(Sw.MLR_full, newdata = tempD)
+    swmap.MLR <- cbind(data.frame(tempD[, c("x", "y")]), swmap.MLR)
+    
+    map.MLR.r <- rasterFromXYZ(as.data.frame(swmap.MLR[, 1:3]))
+    plot(map.MLR.r, main = "predicted Total Nitrogen")
+    addnortharrow(pos = "topleft", padin = c(4,0.5), scale = .5,
+                  lwd = .5, border = "black", cols = c("white", "black"),
+                  text.col = "black")
+    addscalebar(widthhint = 0.1, unitcategory = "metric", htin = 0.1,
+                padin = c(1.2, 0.3), style = "bar", bar.cols = c("black", "white"),
+                lwd = 0.4, label.cex = 0.8, label.col = "black", pos = "bottomleft")
+    writeRaster(map.MLR.r, "r4.tif", format = "GTiff",
+                datatype = "FLT4S", overwrite = TRUE)
+  })
+
+
+```
+
+### Phosphorus
+
+```{r}
+renderPlot({
+    swdp <- datasetInput()
+    
+    ## change coordinates to numeric data type
+    ## Remove all non-finite data
+    swdp <- na.omit(swdp)
+    str(swdp)
+    ## Read in the boundary shape file from the directory
+    swbd <- st_read("swlgac.shp")
+    
+    ## Change data point dataframe to Spatialpoint data frame
+    coordinates(swdp)<- ~Long+Lat
+    
+    
+    ## Plot the boundary shape file and data points to preview 
+    qtm(swbd, format = "World", projection = "+proj=tmerc +lat_0=4 +lon_0=4.5 
+                    +k=0.99975 +x_0=230738.26 +y_0=0 
+                    +ellps=clrk80 +units=m +no_defs")+
+      qtm(swdp,  format = "World",projection = "+proj=tmerc +lat_0=4 +lon_0=4.5 
+                    +k=0.99975 +x_0=230738.26 +y_0=0 
+                    +ellps=clrk80 +units=m +no_defs")
+    
+    files <- list.files(path = "C:\\RtrainingFiles\\Land_suit project\\files4",
+                        pattern = "\\.tif$", full.names = TRUE)
+    r1 <- raster(files[1])
+    for (i in 2:length(files)) {
+      r1 <- raster::stack(r1, files[i])
+    }
+    r1
+    
+    swdat <- raster::extract(r1, swdp, sp = 1,
+                             method = "simple")
+    swdat <- as.data.frame(swdat)
+  
+    which(!complete.cases(swdat))
+    swdat<- swdat[complete.cases(swdat), ]
+    str(swdat)
+    
+    Sw.MLR_full <- randomForest(phosphorous_extractable~ aspect4 + 
+                                flowdir4 + slope4+  hillshade +roughness4 + topoindex4+
+                                temperatureData+precipitationData +ndvi9+toporough4,
+                      data = swdat, ntree = 500, mtry = 5)
+    
+    tempD <- data.frame(cellNos = seq(1:ncell(r1)))
+    vals <- as.data.frame(getValues(r1))
+    tempD <- cbind(tempD, vals)
+    tempD <- tempD[complete.cases(tempD), ]
+    cellNos <- c(tempD$cellNos)
+    gXY <- data.frame(xyFromCell(r1, cellNos, spatial = FALSE))
+    tempD <- cbind(gXY, tempD)
+    str(tempD)
+    
+    swmap.MLR <- predict(Sw.MLR_full, newdata = tempD)
+    swmap.MLR <- cbind(data.frame(tempD[, c("x", "y")]), swmap.MLR)
+    
+    map.MLR.r <- rasterFromXYZ(as.data.frame(swmap.MLR[, 1:3]))
+    plot(map.MLR.r, main = "predicted extractable phosphorous")
+     addnortharrow(pos = "topleft", padin = c(4,0.5), scale = .5,
+                  lwd = .5, border = "black", cols = c("white", "black"),
+                  text.col = "black")
+    addscalebar(widthhint = 0.1, unitcategory = "metric", htin = 0.1,
+                padin = c(1.2, 0.3), style = "bar", bar.cols = c("black", "white"),
+                lwd = 0.4, label.cex = 0.8, label.col = "black", pos = "bottomleft")
+    writeRaster(map.MLR.r, "r4.tif", format = "GTiff",
+                datatype = "FLT4S", overwrite = TRUE)
+  })
+
+
+
+```
+
+
+### Potassium
+
+```{r}
+renderPlot({
+    swdp <- datasetInput()
+    
+    ## change coordinates to numeric data type
+    ## Remove all non-finite data
+    swdp <- na.omit(swdp)
+    str(swdp)
+    ## Read in the boundary shape file from the directory
+    swbd <- st_read("swlgac.shp")
+    
+    ## Change data point dataframe to Spatialpoint data frame
+    coordinates(swdp)<- ~Long+Lat
+    
+    
+    ## Plot the boundary shape file and data points to preview 
+    qtm(swbd, format = "World", projection = "+proj=tmerc +lat_0=4 +lon_0=4.5 
+                    +k=0.99975 +x_0=230738.26 +y_0=0 
+                    +ellps=clrk80 +units=m +no_defs")+
+      qtm(swdp,  format = "World",projection = "+proj=tmerc +lat_0=4 +lon_0=4.5 
+                    +k=0.99975 +x_0=230738.26 +y_0=0 
+                    +ellps=clrk80 +units=m +no_defs")
+    
+    files <- list.files(path = "C:\\RtrainingFiles\\Land_suit project\\files4",
+                        pattern = "\\.tif$", full.names = TRUE)
+    r1 <- raster(files[1])
+    for (i in 2:length(files)) {
+      r1 <- raster::stack(r1, files[i])
+    }
+    r1
+    
+    swdat <- raster::extract(r1, swdp, sp = 1,
+                             method = "simple")
+    swdat <- as.data.frame(swdat)
+  
+    which(!complete.cases(swdat))
+    swdat<- swdat[complete.cases(swdat), ]
+    str(swdat)
+    
+    Sw.MLR_full <- randomForest(potassium_extractable~ aspect4 + 
+                                flowdir4 + slope4+  hillshade +roughness4 + topoindex4+
+                                temperatureData+precipitationData +ndvi9+toporough4,
+                      data = swdat, ntree = 500, mtry = 5)
+    
+    tempD <- data.frame(cellNos = seq(1:ncell(r1)))
+    vals <- as.data.frame(getValues(r1))
+    tempD <- cbind(tempD, vals)
+    tempD <- tempD[complete.cases(tempD), ]
+    cellNos <- c(tempD$cellNos)
+    gXY <- data.frame(xyFromCell(r1, cellNos, spatial = FALSE))
+    tempD <- cbind(gXY, tempD)
+    str(tempD)
+    
+    swmap.MLR <- predict(Sw.MLR_full, newdata = tempD)
+    swmap.MLR <- cbind(data.frame(tempD[, c("x", "y")]), swmap.MLR)
+    
+    map.MLR.r <- rasterFromXYZ(as.data.frame(swmap.MLR[, 1:3]))
+    plot(map.MLR.r, main = "predicted extractable potassium")
+     addnortharrow(pos = "topleft", padin = c(4,0.5), scale = .5,
+                  lwd = .5, border = "black", cols = c("white", "black"),
+                  text.col = "black")
+    addscalebar(widthhint = 0.1, unitcategory = "metric", htin = 0.1,
+                padin = c(1.2, 0.3), style = "bar", bar.cols = c("black", "white"),
+                lwd = 0.4, label.cex = 0.8, label.col = "black", pos = "bottomleft")
+    writeRaster(map.MLR.r, "r4.tif", format = "GTiff",
+                datatype = "FLT4S", overwrite = TRUE)
+  })
+
+
+```
+
+### Organic carbon
+
+```{r}
+renderPlot({
+    swdp <- datasetInput()
+    
+    ## change coordinates to numeric data type
+    ## Remove all non-finite data
+    swdp <- na.omit(swdp)
+    str(swdp)
+    ## Read in the boundary shape file from the directory
+    swbd <- st_read("swlgac.shp")
+    
+    ## Change data point dataframe to Spatialpoint data frame
+    coordinates(swdp)<- ~Long+Lat
+    
+    
+    ## Plot the boundary shape file and data points to preview 
+    qtm(swbd, format = "World", projection = "+proj=tmerc +lat_0=4 +lon_0=4.5 
+                    +k=0.99975 +x_0=230738.26 +y_0=0 
+                    +ellps=clrk80 +units=m +no_defs")+
+      qtm(swdp,  format = "World",projection = "+proj=tmerc +lat_0=4 +lon_0=4.5 
+                    +k=0.99975 +x_0=230738.26 +y_0=0 
+                    +ellps=clrk80 +units=m +no_defs")
+    
+    files <- list.files(path = "C:\\RtrainingFiles\\Land_suit project\\files4",
+                        pattern = "\\.tif$", full.names = TRUE)
+    r1 <- raster(files[1])
+    for (i in 2:length(files)) {
+      r1 <- raster::stack(r1, files[i])
+    }
+    r1
+    
+    swdat <- raster::extract(r1, swdp, sp = 1,
+                             method = "simple")
+    swdat <- as.data.frame(swdat)
+  
+    which(!complete.cases(swdat))
+    swdat<- swdat[complete.cases(swdat), ]
+    str(swdat)
+    
+    Sw.MLR_full <- randomForest(carbon_organic~ aspect4 + 
+                                flowdir4 + slope4+  hillshade +roughness4 + topoindex4+
+                                temperatureData+precipitationData +ndvi9+toporough4,
+                      data = swdat, ntree = 500, mtry = 5)
+    
+    tempD <- data.frame(cellNos = seq(1:ncell(r1)))
+    vals <- as.data.frame(getValues(r1))
+    tempD <- cbind(tempD, vals)
+    tempD <- tempD[complete.cases(tempD), ]
+    cellNos <- c(tempD$cellNos)
+    gXY <- data.frame(xyFromCell(r1, cellNos, spatial = FALSE))
+    tempD <- cbind(gXY, tempD)
+    str(tempD)
+    
+    swmap.MLR <- predict(Sw.MLR_full, newdata = tempD)
+    swmap.MLR <- cbind(data.frame(tempD[, c("x", "y")]), swmap.MLR)
+    
+    map.MLR.r <- rasterFromXYZ(as.data.frame(swmap.MLR[, 1:3]))
+    plot(map.MLR.r, main = "predicted total carbon")
+     addnortharrow(pos = "topleft", padin = c(4,0.5), scale = .5,
+                  lwd = .5, border = "black", cols = c("white", "black"),
+                  text.col = "black")
+    addscalebar(widthhint = 0.1, unitcategory = "metric", htin = 0.1,
+                padin = c(1.2, 0.3), style = "bar", bar.cols = c("black", "white"),
+                lwd = 0.4, label.cex = 0.8, label.col = "black", pos = "bottomleft")
+    writeRaster(map.MLR.r, "r4.tif", format = "GTiff",
+                datatype = "FLT4S", overwrite = TRUE)
+  })
+
+```
+### pH water
+
+```{r}
+renderPlot({
+    swdp <- datasetInput()
+    
+    ## change coordinates to numeric data type
+    ## Remove all non-finite data
+    swdp <- na.omit(swdp)
+    str(swdp)
+    ## Read in the boundary shape file from the directory
+    swbd <- st_read("swlgac.shp")
+    
+    ## Change data point dataframe to Spatialpoint data frame
+    coordinates(swdp)<- ~Long+Lat
+    
+    
+    ## Plot the boundary shape file and data points to preview 
+    qtm(swbd, format = "World", projection = "+proj=tmerc +lat_0=4 +lon_0=4.5 
+                    +k=0.99975 +x_0=230738.26 +y_0=0 
+                    +ellps=clrk80 +units=m +no_defs")+
+      qtm(swdp,  format = "World",projection = "+proj=tmerc +lat_0=4 +lon_0=4.5 
+                    +k=0.99975 +x_0=230738.26 +y_0=0 
+                    +ellps=clrk80 +units=m +no_defs")
+    
+    files <- list.files(path = "C:\\RtrainingFiles\\Land_suit project\\files4",
+                        pattern = "\\.tif$", full.names = TRUE)
+    r1 <- raster(files[1])
+    for (i in 2:length(files)) {
+      r1 <- raster::stack(r1, files[i])
+    }
+    r1
+    
+    swdat <- raster::extract(r1, swdp, sp = 1,
+                             method = "simple")
+    swdat <- as.data.frame(swdat)
+  
+    which(!complete.cases(swdat))
+    swdat<- swdat[complete.cases(swdat), ]
+    str(swdat)
+    
+    Sw.MLR_full <- randomForest(pH~ aspect4 + 
+                                flowdir4 + slope4+  hillshade +roughness4 + topoindex4+
+                                temperatureData+precipitationData +ndvi9+toporough4,
+                      data = swdat, ntree = 500, mtry = 5)
+    tempD <- data.frame(cellNos = seq(1:ncell(r1)))
+    vals <- as.data.frame(getValues(r1))
+    tempD <- cbind(tempD, vals)
+    tempD <- tempD[complete.cases(tempD), ]
+    cellNos <- c(tempD$cellNos)
+    gXY <- data.frame(xyFromCell(r1, cellNos, spatial = FALSE))
+    tempD <- cbind(gXY, tempD)
+    str(tempD)
+    
+    swmap.MLR <- predict(Sw.MLR_full, newdata = tempD)
+    swmap.MLR <- cbind(data.frame(tempD[, c("x", "y")]), swmap.MLR)
+    
+    map.MLR.r <- rasterFromXYZ(as.data.frame(swmap.MLR[, 1:3]))
+    plot(map.MLR.r, main = "predicted pH")
+     addnortharrow(pos = "topleft", padin = c(4,0.5), scale = .5,
+                  lwd = .5, border = "black", cols = c("white", "black"),
+                  text.col = "black")
+    addscalebar(widthhint = 0.1, unitcategory = "metric", htin = 0.1,
+                padin = c(1.2, 0.3), style = "bar", bar.cols = c("black", "white"),
+                lwd = 0.4, label.cex = 0.8, label.col = "black", pos = "bottomleft")
+    writeRaster(map.MLR.r, "r4.tif", format = "GTiff",
+                datatype = "FLT4S", overwrite = TRUE)
+  })
+
+```
+
+Column {.tabset}
+----------------------------------------------------------------------------
+
+
+### state map 
+
+```{r}
+ renderPlot({
+   polyd <- polyn()
+    r5<- raster("r4.tif")
+    plot(r5)
+  
+    r3 <- raster::mask(crop(r5, polyd), polyd, inverse=FALSE, 
+                       updatevalue=NA, updateNA=FALSE)
+    
+    plot(r3)
+     addnortharrow(pos = "topright", padin = c(3,0.3), scale = .5,
+                  lwd = .5, border = "black", cols = c("white", "black"),
+                  text.col = "black")
+    addscalebar(widthhint = 0.1, unitcategory = "metric", htin = 0.1,
+                padin = c(0.8, 0.3), style = "bar", bar.cols = c("black", "white"),
+                lwd = 0.4, label.cex = 0.8, label.col = "black", pos = "bottomleft")
+  })
+
+
+```
+
+
+
